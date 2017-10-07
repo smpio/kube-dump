@@ -13,8 +13,6 @@ log = logging.getLogger(__name__)
 
 
 def main():
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('output_dir', help='directory where to dump')
     arg_parser.add_argument('--in-cluster', action='store_true', help='configure with in cluster kubeconfig')
@@ -23,8 +21,10 @@ def main():
     arg_parser.add_argument('--fast', action='store_true', help='don\'t load original YAML from server')
     arg_parser.add_argument('--format', choices=['json', 'yaml'], default='yaml')
     arg_parser.add_argument('--skip-kind', nargs='+', default=['GlobalFelixConfig'], help='skip this kind')
-    #arg_parser.add_argument('-v', '--verbosity', action='count', help='increase output verbosity')
+    arg_parser.add_argument('--log-level', default='WARNING')
     args = arg_parser.parse_args()
+
+    logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
 
     if args.in_cluster:
         kubernetes.config.load_incluster_config()
@@ -91,17 +91,20 @@ class Dumper:
         objects = result['items']
 
         for obj in objects:
+            obj_name = obj['metadata']['name']
+
+            if resource.namespaced:
+                obj_namespace = obj['metadata']['namespace']
+            else:
+                obj_namespace = '_'
+
+            log.info('%s %s/%s', resource.kind, obj_namespace, obj_name)
+
             if self.skip_owned and 'ownerReferences' in obj['metadata']:
                 continue
 
             obj['apiVersion'] = result['apiVersion']
             obj['kind'] = resource.kind
-
-            obj_name = obj['metadata']['name']
-            if resource.namespaced:
-                obj_namespace = obj['metadata']['namespace']
-            else:
-                obj_namespace = '_'
 
             resource_dir = os.path.join(self.output_dir, obj_namespace, resource.kind)
             os.makedirs(resource_dir, exist_ok=True)
