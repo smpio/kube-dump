@@ -2,13 +2,12 @@ import os
 import json
 import shutil
 import logging
+import argparse
 
 import yaml
 import kubernetes.client
 import kubernetes.client.rest
 import kubernetes.config
-
-from . import config
 
 log = logging.getLogger(__name__)
 
@@ -16,20 +15,37 @@ log = logging.getLogger(__name__)
 def main():
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
-    if config.in_cluster:
+    arg_parser = argparse.ArgumentParser()
+    arg_parser.add_argument('output_dir', help='directory where to dump')
+    arg_parser.add_argument('--in-cluster', action='store_true', help='configure with in cluster kubeconfig')
+    arg_parser.add_argument('--no-clean', action='store_true', help='don\'t clean output directory on start')
+    arg_parser.add_argument('--no-skip-owned', action='store_true', help='don\'t skip objects with ownerReferences')
+    arg_parser.add_argument('--fast', action='store_true', help='don\'t load original YAML from server')
+    arg_parser.add_argument('--format', choices=['json', 'yaml'], default='yaml')
+    arg_parser.add_argument('--skip-kind', nargs='+', default=['GlobalFelixConfig'], help='skip this kind')
+    #arg_parser.add_argument('-v', '--verbosity', action='count', help='increase output verbosity')
+    args = arg_parser.parse_args()
+
+    if args.in_cluster:
         kubernetes.config.load_incluster_config()
     else:
         kubernetes.client.configuration.host = 'http://127.0.0.1:8001'
 
-    dumper = Dumper()
+    dumper = Dumper(args.output_dir)
+    dumper.format = args.format
+    dumper.clean_output = not args.no_clean
+    dumper.skip_owned = not args.no_skip_owned
+    dumper.fast = not args.no_skip_owned
+    dumper.improved_yaml = not args.fast
+    dumper.skip_kinds = args.skip_kind
     dumper.dump_all()
 
 
 class Dumper:
-    def __init__(self):
+    def __init__(self, output_dir):
         self.client = kubernetes.client.ApiClient()
-        self.output_dir = 'dump'
-        self.use_yaml = True
+        self.output_dir = output_dir
+        self.format = 'yaml'
         self.clean_output = True
         self.skip_owned = True
         self.improved_yaml = True
@@ -92,7 +108,7 @@ class Dumper:
 
             object_filepath = os.path.join(resource_dir, obj_name)
 
-            if self.use_yaml:
+            if self.format == 'yaml':
                 with open(object_filepath + '.yaml', 'w') as fp:
                     if self.improved_yaml:
                         if resource.namespaced:
@@ -107,7 +123,7 @@ class Dumper:
                         fp.write(data)
                     else:
                         yaml.safe_dump(obj, default_flow_style=False, stream=fp)
-            else:
+            elif self.format == 'json':
                 with open(object_filepath + '.json', 'w') as fp:
                     json.dump(obj, fp, indent=2)
 
@@ -117,3 +133,7 @@ def get_api_group_version_resource_path(api_group_version):
         return '/api/v1'
     else:
         return '/apis/' + api_group_version
+
+
+if __name__ == '__main__':
+    main()

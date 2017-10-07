@@ -4,4 +4,4 @@ Kubernetes cluster dump tool.
 
 ## Usage
 
-`python -m kube_dump --help`
+`./kube-dump.py`
