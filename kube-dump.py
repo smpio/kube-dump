@@ -54,7 +54,10 @@ class Dumper:
         self.skip_kinds = ['GlobalFelixConfig']
 
     def call(self, *args, **kwargs):
-        return self.client.call_api(*args, **kwargs, _return_http_data_only=True)
+        kwargs.setdefault('response_type', object)
+        kwargs.setdefault('auth_settings', ['BearerToken'])
+        kwargs.setdefault('_return_http_data_only', True)
+        return self.client.call_api(*args, **kwargs)
 
     def dump_all(self):
         if self.clean_output:
@@ -89,7 +92,7 @@ class Dumper:
 
     def dump_resource(self, resource_path, resource):
         list_path = '{}/{}'.format(resource_path, resource.name)
-        result = self.call(list_path, 'GET', response_type=object)
+        result = self.call(list_path, 'GET')
         objects = result['items']
 
         for obj in objects:
@@ -121,7 +124,7 @@ class Dumper:
                         else:
                             obj_path = '{}/{}'.format(list_path, obj_name)
 
-                        data = self.call(obj_path, 'GET', response_type=object, header_params={
+                        data = self.call(obj_path, 'GET', header_params={
                             'Accept': 'application/yaml',
                         })
 
