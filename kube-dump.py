@@ -22,7 +22,7 @@ def main():
     arg_parser.add_argument('--no-skip-owned', action='store_true', help='don\'t skip objects with ownerReferences')
     arg_parser.add_argument('--fast', action='store_true', help='don\'t load original YAML from server')
     arg_parser.add_argument('--format', choices=['json', 'yaml'], default='yaml')
-    arg_parser.add_argument('--skip-kind', nargs='+', default=['GlobalFelixConfig'], help='skip this kind')
+    arg_parser.add_argument('--skip-kind', nargs='+', default=['GlobalFelixConfig', 'GlobalBGPConfig'], help='skip this kind')
     arg_parser.add_argument('--log-level', default='WARNING')
     args = arg_parser.parse_args()
 
