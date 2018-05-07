@@ -52,7 +52,7 @@ class Dumper:
         self.clean_output = True
         self.skip_owned = True
         self.improved_yaml = True
-        self.skip_kinds = ['GlobalFelixConfig']
+        self.skip_kinds = []
 
     def call(self, *args, **kwargs):
         kwargs.setdefault('response_type', object)
