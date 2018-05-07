@@ -1,2 +1,2 @@
-kubernetes
+kubernetes ~= 3.0
 PyYAML
