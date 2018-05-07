@@ -5,6 +5,7 @@ import json
 import shutil
 import logging
 import argparse
+import itertools
 
 import yaml
 import kubernetes.client
@@ -64,10 +65,10 @@ class Dumper:
             shutil.rmtree(self.output_dir, ignore_errors=True)
 
         api_groups = self.call('/apis/', 'GET', response_type='V1APIGroupList').groups
-        api_group_versions = [api_group.preferred_version.group_version for api_group in api_groups]
+        api_group_versions = [v.group_version for v in itertools.chain.from_iterable(api_group.versions for api_group in api_groups)]
 
         # v1 API group
-        api_group_versions.append('v1')
+        api_group_versions.insert(0, 'v1')
 
         # Make this API group lowest priority
         if 'extensions/v1beta1' in api_group_versions:
