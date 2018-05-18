@@ -25,7 +25,6 @@ def main():
     arg_parser.add_argument('--format', choices=['json', 'yaml'], default='yaml')
     arg_parser.add_argument('--skip-kind', nargs='+', default=[], help='skip this kind')
     arg_parser.add_argument('--log-level', default='WARNING')
-    arg_parser.add_argument('--fail-on-not-acceptable', action='store_true', help='fail loudly if some resource can\'t be dumped')
     args = arg_parser.parse_args()
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
@@ -42,7 +41,6 @@ def main():
     dumper.fast = not args.no_skip_owned
     dumper.improved_yaml = not args.fast
     dumper.skip_kinds = args.skip_kind
-    dumper.ignore_not_acceptable = not args.fail_on_not_acceptable
     dumper.dump_all()
 
 
@@ -55,7 +53,6 @@ class Dumper:
         self.skip_owned = True
         self.improved_yaml = True
         self.skip_kinds = []
-        self.ignore_not_acceptable = True
 
     def call(self, *args, **kwargs):
         kwargs.setdefault('response_type', object)
@@ -91,14 +88,8 @@ class Dumper:
                 if resource.kind in dumped_kinds:
                     continue
 
-                try:
-                    self.dump_resource(resource_path, resource)
-                    dumped_kinds.add(resource.kind)
-                except kubernetes.client.rest.ApiException as e:
-                    if e.status == 406 and self.ignore_not_acceptable:
-                        log.exception('Skipping %s in %s', resource.kind, api_group_version)
-                    else:
-                        raise e
+                self.dump_resource(resource_path, resource)
+                dumped_kinds.add(resource.kind)
 
     def dump_resource(self, resource_path, resource):
         list_path = '{}/{}'.format(resource_path, resource.name)
@@ -134,11 +125,17 @@ class Dumper:
                         else:
                             obj_path = '{}/{}'.format(list_path, obj_name)
 
-                        data = self.call(obj_path, 'GET', header_params={
-                            'Accept': 'application/yaml',
-                        })
-
-                        fp.write(data)
+                        try:
+                            data = self.call(obj_path, 'GET', header_params={
+                                'Accept': 'application/yaml',
+                            })
+                            fp.write(data)
+                        except kubernetes.client.rest.ApiException as e:
+                            if e.status == 406:
+                                log.warning('Can\'t get improved yaml %s, fallback to ordinary yaml', obj_path)
+                                yaml.safe_dump(obj, default_flow_style=False, stream=fp)
+                            else:
+                                raise e
                     else:
                         yaml.safe_dump(obj, default_flow_style=False, stream=fp)
             elif self.format == 'json':
