@@ -23,8 +23,9 @@ def main():
     arg_parser.add_argument('--no-skip-owned', action='store_true', help='don\'t skip objects with ownerReferences')
     arg_parser.add_argument('--fast', action='store_true', help='don\'t load original YAML from server')
     arg_parser.add_argument('--format', choices=['json', 'yaml'], default='yaml')
-    arg_parser.add_argument('--skip-kind', nargs='+', default=['GlobalFelixConfig', 'GlobalBGPConfig'], help='skip this kind')
+    arg_parser.add_argument('--skip-kind', nargs='+', default=[], help='skip this kind')
     arg_parser.add_argument('--log-level', default='WARNING')
+    arg_parser.add_argument('--fail-on-not-acceptable', action='store_true', help='fail loudly if some resource can\'t be dumped')
     args = arg_parser.parse_args()
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
@@ -41,6 +42,7 @@ def main():
     dumper.fast = not args.no_skip_owned
     dumper.improved_yaml = not args.fast
     dumper.skip_kinds = args.skip_kind
+    dumper.ignore_not_acceptable = not args.fail_on_not_acceptable
     dumper.dump_all()
 
 
@@ -53,6 +55,7 @@ class Dumper:
         self.skip_owned = True
         self.improved_yaml = True
         self.skip_kinds = []
+        self.ignore_not_acceptable = True
 
     def call(self, *args, **kwargs):
         kwargs.setdefault('response_type', object)
@@ -88,8 +91,14 @@ class Dumper:
                 if resource.kind in dumped_kinds:
                     continue
 
-                self.dump_resource(resource_path, resource)
-                dumped_kinds.add(resource.kind)
+                try:
+                    self.dump_resource(resource_path, resource)
+                    dumped_kinds.add(resource.kind)
+                except kubernetes.client.rest.ApiException as e:
+                    if e.status == 406 and self.ignore_not_acceptable:
+                        log.exception('Skipping %s in %s', resource.kind, api_group_version)
+                    else:
+                        raise e
 
     def dump_resource(self, resource_path, resource):
         list_path = '{}/{}'.format(resource_path, resource.name)
