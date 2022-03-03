@@ -23,7 +23,7 @@ def main():
     arg_parser.add_argument('--no-skip-owned', action='store_true', help='don\'t skip objects with ownerReferences')
     arg_parser.add_argument('--fast', action='store_true', help='don\'t load original YAML from server')
     arg_parser.add_argument('--format', choices=['json', 'yaml'], default='yaml')
-    arg_parser.add_argument('--skip-kind', nargs='+', default=[], help='skip this kind')
+    arg_parser.add_argument('--skip-gk', nargs='+', default=[], help='skip this Group/Kind')
     arg_parser.add_argument('--log-level', default='WARNING')
     args = arg_parser.parse_args()
 
@@ -40,7 +40,7 @@ def main():
     dumper.skip_owned = not args.no_skip_owned
     dumper.fast = not args.no_skip_owned
     dumper.improved_yaml = not args.fast
-    dumper.skip_kinds = args.skip_kind
+    dumper.skip_gks = args.skip_gk
     dumper.dump_all()
 
 
@@ -52,7 +52,7 @@ class Dumper:
         self.clean_output = True
         self.skip_owned = True
         self.improved_yaml = True
-        self.skip_kinds = []
+        self.skip_gks = []
 
     def call(self, *args, **kwargs):
         kwargs.setdefault('response_type', object)
@@ -65,17 +65,13 @@ class Dumper:
             shutil.rmtree(self.output_dir, ignore_errors=True)
 
         api_groups = self.call('/apis/', 'GET', response_type='V1APIGroupList').groups
-        api_group_versions = [v.group_version for v in itertools.chain.from_iterable(api_group.versions for api_group in api_groups)]
+        api_group_versions = ['v1'] + [g.preferred_version.group_version for g in api_groups]
 
-        # v1 API group
-        api_group_versions.insert(0, 'v1')
-
-        # Make this API group lowest priority
-        if 'extensions/v1beta1' in api_group_versions:
+        # Deprecated
+        try:
             api_group_versions.remove('extensions/v1beta1')
-            api_group_versions.append('extensions/v1beta1')
-
-        dumped_kinds = set(self.skip_kinds)
+        except ValueError:
+            pass
 
         for api_group_version in api_group_versions:
             resource_path = get_api_group_version_resource_path(api_group_version)
@@ -85,13 +81,18 @@ class Dumper:
                 if 'list' not in resource.verbs:
                     continue
 
-                if resource.kind in dumped_kinds:
+                if api_group_version == 'v1':
+                    api_group = '_core'
+                else:
+                    api_group = api_group_version.split('/', maxsplit=1)[0]
+
+                gk = f'{api_group}/{resource.kind}'
+                if gk in self.skip_gks:
                     continue
 
-                self.dump_resource(resource_path, resource)
-                dumped_kinds.add(resource.kind)
+                self.dump_resource(api_group, resource_path, resource)
 
-    def dump_resource(self, resource_path, resource):
+    def dump_resource(self, api_group, resource_path, resource):
         list_path = '{}/{}'.format(resource_path, resource.name)
         result = self.call(list_path, 'GET')
         objects = result['items']
@@ -104,15 +105,15 @@ class Dumper:
             else:
                 obj_namespace = '_'
 
-            log.info('%s %s/%s', resource.kind, obj_namespace, obj_name)
+            obj['apiVersion'] = result['apiVersion']
+            obj['kind'] = resource.kind
+
+            log.info('%s/%s %s/%s', api_group, resource.kind, obj_namespace, obj_name)
 
             if self.skip_owned and 'ownerReferences' in obj['metadata']:
                 continue
 
-            obj['apiVersion'] = result['apiVersion']
-            obj['kind'] = resource.kind
-
-            resource_dir = os.path.join(self.output_dir, obj_namespace, resource.kind)
+            resource_dir = os.path.join(self.output_dir, obj_namespace, api_group, resource.kind)
             os.makedirs(resource_dir, exist_ok=True)
 
             object_filepath = os.path.join(resource_dir, obj_name)
