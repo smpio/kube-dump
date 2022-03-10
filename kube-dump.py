@@ -5,12 +5,13 @@ import json
 import shutil
 import logging
 import argparse
-import itertools
 
 import yaml
 import kubernetes.client
 import kubernetes.client.rest
 import kubernetes.config
+
+from kubernetes.client import models
 
 log = logging.getLogger(__name__)
 
@@ -65,31 +66,55 @@ class Dumper:
             shutil.rmtree(self.output_dir, ignore_errors=True)
 
         api_groups = self.call('/apis/', 'GET', response_type='V1APIGroupList').groups
-        api_group_versions = ['v1'] + [g.preferred_version.group_version for g in api_groups]
 
-        # Deprecated
-        try:
-            api_group_versions.remove('extensions/v1beta1')
-        except ValueError:
-            pass
+        # remove deprecated group
+        api_groups = [g for g in api_groups if g.preferred_version.group_version != 'extensions/v1beta1']
 
-        for api_group_version in api_group_versions:
-            resource_path = get_api_group_version_resource_path(api_group_version)
-            resources = self.call(resource_path, 'GET', response_type='V1APIResourceList').resources
+        # add core "v1" API group
+        core_api_group_version = models.V1GroupVersionForDiscovery(group_version='v1', version='v1')
+        core_api_group = models.V1APIGroup(
+            api_version='v1',
+            kind='APIGroup',
+            preferred_version=core_api_group_version,
+            versions=[core_api_group_version])
+        api_groups = [core_api_group] + api_groups
 
-            for resource in resources:
-                if 'list' not in resource.verbs:
-                    continue
+        for g in api_groups:
+            for v in g.versions:
+                if g.preferred_version.group_version == v.group_version:
+                    g.preferred_version = v
+                resource_path = get_api_group_version_resource_path(v.group_version)
+                v.resources = self.call(resource_path, 'GET', response_type='V1APIResourceList').resources
+                v.resources = [r for r in v.resources if '/' not in r.name]
+                v.resources = [r for r in v.resources if 'list' in r.verbs]
+                for r in v.resources:
+                    r.g = g
+                    r.gv = v
 
-                if api_group_version == 'v1':
+        # first we assume that resources of latest version are best
+        for g in api_groups:
+            g.best_resources = {}
+            for v in g.versions:
+                for r in v.resources:
+                    g.best_resources[r.kind] = r
+
+        # if there is preferred version of resource, use it
+        for g in api_groups:
+            for r in g.preferred_version.resources:
+                g.best_resources[r.kind] = r
+
+        for g in api_groups:
+            for resource in g.best_resources.values():
+                if resource.g is core_api_group:
                     api_group = '_core'
                 else:
-                    api_group = api_group_version.split('/', maxsplit=1)[0]
+                    api_group = resource.gv.group_version.split('/', maxsplit=1)[0]
 
                 gk = f'{api_group}/{resource.kind}'
                 if gk in self.skip_gks:
                     continue
 
+                resource_path = get_api_group_version_resource_path(resource.gv.group_version)
                 self.dump_resource(api_group, resource_path, resource)
 
     def dump_resource(self, api_group, resource_path, resource):
